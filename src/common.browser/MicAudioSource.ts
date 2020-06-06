@@ -305,7 +305,11 @@ export class MicAudioSource implements IAudioSource {
         }
 
         // https://developer.mozilla.org/en-US/docs/Web/API/AudioContext
-        if (typeof (AudioContext) === "undefined") {
+        var AudioContext = window.AudioContext // Default
+                        || (window as any).webkitAudioContext // Safari.
+                        || false;
+
+        if (!!AudioContext) {
             throw new Error("Browser does not support Web Audio API (AudioContext is not available).");
         }
 
