@@ -32,6 +32,7 @@ import {
     AudioStreamFormatImpl,
 } from "../sdk/Audio/AudioStreamFormat";
 import { IRecorder } from "./IRecorder";
+import { PcmRecorder } from "./PCMRecorder";
 
 // Extending the default definition with browser specific definitions for backward compatibility
 interface INavigator extends Navigator {
@@ -64,8 +65,11 @@ export class MicAudioSource implements IAudioSource {
 
     private privIsClosing: boolean;
 
+    private privPreparedStream: ChunkedArrayBufferStream;
+    private privRecorderReplaced: boolean;
+
     public constructor(
-        private readonly privRecorder: IRecorder,
+        private privRecorder: IRecorder,
         private readonly deviceId?: string,
         audioSourceId?: string,
         mediaStream?: MediaStream
@@ -76,6 +80,48 @@ export class MicAudioSource implements IAudioSource {
         this.privEvents = new EventSource<AudioSourceEvent>();
         this.privMediaStream = mediaStream || null;
         this.privIsClosing = false;
+        this.privPreparedStream = null;
+        this.privRecorderReplaced = false;
+    }
+
+    public preListenOnMediaStream(mediaStream: MediaStream, firstBytesCB: () => void): void {
+        if (mediaStream != null) {
+            if (!this.privRecorderReplaced) {
+                this.privRecorder = new PcmRecorder(false);
+                this.privRecorderReplaced = true;
+                // eslint-disable-next-line no-console
+                console.log("********* Replaced !!!!");
+            }
+            this.privMediaStream = mediaStream;
+            // eslint-disable-next-line no-console
+            console.log("!!!!!!!! Before Pre-listened!!!!");
+            // eslint-disable-next-line no-console
+            console.log(new Date().getTime());
+            try {
+                this.createAudioContext();
+            } catch (error) {
+                // eslint-disable-next-line no-console
+                console.log(error);
+                return;
+            }
+            // eslint-disable-next-line no-console
+            console.log(new Date().getTime());
+            const audioNodeId = createNoDashGuid();
+            const stream = new ChunkedArrayBufferStream(this.privOutputChunkSize, audioNodeId);
+            // eslint-disable-next-line no-console
+            console.log(new Date().getTime());
+            try {
+                this.privRecorder.record(this.privContext, this.privMediaStream, stream, firstBytesCB);
+            } catch (error) {
+                // eslint-disable-next-line no-console
+                console.log(error);
+            }
+            this.privPreparedStream = stream;
+            // eslint-disable-next-line no-console
+            console.log("!!!!!!!! Pre-listened!!!!" + audioNodeId + " ");
+            // eslint-disable-next-line no-console
+            console.log(new Date().getTime());
+        }
     }
 
     public get format(): Promise<AudioStreamFormatImpl> {
@@ -284,10 +330,21 @@ export class MicAudioSource implements IAudioSource {
 
     private async listen(audioNodeId: string): Promise<Stream<ArrayBuffer>> {
         await this.turnOn();
+        if (this.privPreparedStream) {
+            this.privPreparedStream.updateId(audioNodeId);
+            this.privStreams[audioNodeId] = this.privPreparedStream;
+            // eslint-disable-next-line no-console
+            console.log("!!!!!!!! Already listened!!!!" + audioNodeId);
+            // eslint-disable-next-line no-console
+            console.log(new Date().getTime());
+            return this.privPreparedStream;
+        }
+        // eslint-disable-next-line no-console
+        console.log("!!!!!!!! Checking ID !!!!" + audioNodeId + " vs " + this.privId);
         const stream = new ChunkedArrayBufferStream(this.privOutputChunkSize, audioNodeId);
         this.privStreams[audioNodeId] = stream;
         try {
-            this.privRecorder.record(this.privContext, this.privMediaStream, stream);
+            this.privRecorder.record(this.privContext, this.privMediaStream, stream, null);
         } catch (error) {
             this.onEvent(new AudioStreamNodeErrorEvent(this.privId, audioNodeId, error as string));
             throw error;
@@ -323,6 +380,7 @@ export class MicAudioSource implements IAudioSource {
         if ("close" in this.privContext) {
             hasClose = true;
         }
+        hasClose = false; // Just suspended it
 
         if (hasClose) {
             if (!this.privIsClosing) {

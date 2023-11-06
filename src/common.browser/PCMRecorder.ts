@@ -9,11 +9,14 @@ export class PcmRecorder implements IRecorder {
     private privSpeechProcessorScript: string; // speech-processor.js Url
     private privStopInputOnRelease: boolean;
 
+    private privWorkletNode: AudioWorkletNode;
+    private privRecordingStarted: number;
+
     public constructor(stopInputOnRelease: boolean) {
         this.privStopInputOnRelease = stopInputOnRelease;
     }
 
-    public record(context: AudioContext, mediaStream: MediaStream, outputStream: Stream<ArrayBuffer>): void {
+    public record(context: AudioContext, mediaStream: MediaStream, outputStream: Stream<ArrayBuffer>, firstBytesCB: () => void): void {
         const desiredSampleRate = 16000;
 
         const waveStreamEncoder = new RiffPcmEncoder(context.sampleRate, desiredSampleRate);
@@ -38,7 +41,21 @@ export class PcmRecorder implements IRecorder {
                 }
             })();
             scriptNode.onaudioprocess = (event: AudioProcessingEvent): void => {
+                if (this.privRecordingStarted > 0) {
+                    // eslint-disable-next-line no-console
+                    console.log("Received first bytes....");
+                    // eslint-disable-next-line no-console
+                    console.log(new Date().getTime());
+                    if (firstBytesCB != null) {
+                        firstBytesCB();
+                    }
+                    this.privRecordingStarted = -1;
+                }
                 const inputFrame = event.inputBuffer.getChannelData(0);
+                // eslint-disable-next-line no-console
+                console.log("onaudioprocess");
+                // eslint-disable-next-line no-console
+                console.log(new Date().getTime());
 
                 if (outputStream && !outputStream.isClosed) {
                     const waveFrame = waveStreamEncoder.encode(inputFrame);
@@ -48,6 +65,8 @@ export class PcmRecorder implements IRecorder {
                             isEnd: false,
                             timeReceived: Date.now(),
                         });
+                        // eslint-disable-next-line no-console
+                        console.log("onaudioprocess written");
                     }
                 }
             };
@@ -63,6 +82,7 @@ export class PcmRecorder implements IRecorder {
         // https://webaudio.github.io/web-audio-api/#audioworklet
         // Using AudioWorklet to improve audio quality and avoid audio glitches due to blocking the UI thread
         const skipAudioWorklet = !!this.privSpeechProcessorScript && this.privSpeechProcessorScript.toLowerCase() === "ignore";
+        this.privRecordingStarted = new Date().getTime();
 
         if (!!context.audioWorklet && !skipAudioWorklet) {
             if (!this.privSpeechProcessorScript) {
@@ -83,13 +103,93 @@ export class PcmRecorder implements IRecorder {
                   registerProcessor('speech-processor', SP);`;
                 const blob = new Blob([workletScript], { type: "application/javascript; charset=utf-8" });
                 this.privSpeechProcessorScript = URL.createObjectURL(blob);
+                // eslint-disable-next-line no-console
+                console.log("========+++??? register processor");
+                // eslint-disable-next-line no-console
+                console.log(new Date().getTime());
             }
 
+            if (!!this.privWorkletNode) {
+                // eslint-disable-next-line no-console
+                console.log("========reuse worklet node:");
+                // eslint-disable-next-line no-console
+                console.log(new Date().getTime());
+                this.privWorkletNode.port.onmessage = (ev: MessageEvent): void => {
+                    /*
+                    // eslint-disable-next-line no-console
+                    console.log("onmessage");
+                    // eslint-disable-next-line no-console
+                    console.log(new Date().getTime());
+                    //*/
+                    if (this.privRecordingStarted > 0) {
+                        // eslint-disable-next-line no-console
+                        console.log("Received first bytes....");
+                        // eslint-disable-next-line no-console
+                        console.log(new Date().getTime());
+                        if (firstBytesCB != null) {
+                            firstBytesCB();
+                        }
+                        this.privRecordingStarted = -1;
+                    }
+                    const inputFrame: Float32Array = ev.data as Float32Array;
+
+                    if (outputStream && !outputStream.isClosed) {
+                        const waveFrame = waveStreamEncoder.encode(inputFrame);
+                        if (!!waveFrame) {
+                            outputStream.writeStreamChunk({
+                                buffer: waveFrame,
+                                isEnd: false,
+                                timeReceived: Date.now(),
+                            });
+                            /*
+                            // eslint-disable-next-line no-console
+                            console.log("onmessage written");
+                            //*/
+                        }
+                    }
+                };
+                micInput.connect(this.privWorkletNode);
+                this.privWorkletNode.connect(context.destination);
+                // eslint-disable-next-line no-console
+                console.log(new Date().getTime());
+                this.privMediaResources = {
+                    scriptProcessorNode: this.privWorkletNode,
+                    source: micInput,
+                    stream: mediaStream,
+                };
+                return;
+            }
+            // eslint-disable-next-line no-console
+            console.log("========++++++ add processor script");
+            // eslint-disable-next-line no-console
+            console.log(new Date().getTime());
             context.audioWorklet
                 .addModule(this.privSpeechProcessorScript)
                 .then((): void => {
+                    // eslint-disable-next-line no-console
+                    console.log("========+++--- added processor script");
+                    // eslint-disable-next-line no-console
+                    console.log(new Date().getTime());
                     const workletNode = new AudioWorkletNode(context, "speech-processor");
+                    // eslint-disable-next-line no-console
+                    console.log(new Date().getTime());
                     workletNode.port.onmessage = (ev: MessageEvent): void => {
+                        /*
+                        // eslint-disable-next-line no-console
+                        console.log("onmessage");
+                        // eslint-disable-next-line no-console
+                        console.log(new Date().getTime());
+                        //*/
+                        if (this.privRecordingStarted > 0) {
+                            // eslint-disable-next-line no-console
+                            console.log("Received first bytes....");
+                            // eslint-disable-next-line no-console
+                            console.log(new Date().getTime());
+                            if (firstBytesCB != null) {
+                                firstBytesCB();
+                            }
+                            this.privRecordingStarted = -1;
+                        }
                         const inputFrame: Float32Array = ev.data as Float32Array;
 
                         if (outputStream && !outputStream.isClosed) {
@@ -100,11 +200,18 @@ export class PcmRecorder implements IRecorder {
                                     isEnd: false,
                                     timeReceived: Date.now(),
                                 });
+                                /*
+                                // eslint-disable-next-line no-console
+                                console.log("onmessage written");
+                                //*/
                             }
                         }
                     };
                     micInput.connect(workletNode);
                     workletNode.connect(context.destination);
+                    this.privWorkletNode = workletNode;
+                    // eslint-disable-next-line no-console
+                    console.log(new Date().getTime());
                     this.privMediaResources = {
                         scriptProcessorNode: workletNode,
                         source: micInput,

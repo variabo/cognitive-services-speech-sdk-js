@@ -34,6 +34,10 @@ export class Stream<TBuffer> {
         return this.privId;
     }
 
+    public updateId(newId: string): void {
+        this.privId = newId;
+    }
+
     public close(): void {
         if (!this.privIsWriteEnded) {
             this.writeStreamChunk({
